@@ -60,29 +60,43 @@ def usage(msg):
     return float(cost), int(meta.get("total_tokens", 0))
 
 
-LEAKED = re.compile(r'<parameter name="(\w+)">(.*?)(?=</parameter>|<parameter name=|$)', re.S)
-TRAILING_TAGS = re.compile(r'(\s*</[\w:]+>\s*)+$')
+FIELDS = ("action", "summary", "root_cause", "evidence", "ruled_out", "proposal", "advice")
+# A later argument leaked into the text of an earlier one, either as
+# <parameter name="evidence">...</parameter> or as <evidence>...</evidence>.
+LEAKED = re.compile(
+    r'<parameter name="(\w+)">(.*?)(?=</parameter>|<parameter name=|$)'
+    r'|<(' + "|".join(FIELDS) + r')>(.*?)(?:</\3>|(?=<(?:' + "|".join(FIELDS) + r')>)|$)', re.S)
+TAG = re.compile(r'</?(?:parameter|' + "|".join(FIELDS) + r')\b[^>]*>')
+_decoder = json.JSONDecoder()
 
 
 def _value(text):
-    text = TRAILING_TAGS.sub("", text).strip()
-    try:
-        return json.loads(text)
-    except ValueError:
-        return text
+    """Parse a JSON value if the text is one, ignoring junk after it (e.g. a stray '}')."""
+    text = TAG.sub("", text).strip()
+    if text[:1] in "[{":
+        try:
+            return _decoder.raw_decode(text)[0]
+        except ValueError:
+            pass
+    return text
 
 
 def decode_strings(args):
-    """Repair two common ways small models mangle a large tool call:
-    nested objects sent as JSON strings, and later arguments leaked into the
-    text of an earlier one as <parameter name="..."> markup."""
+    """Repair the ways small models mangle a large tool call: nested objects
+    sent as JSON strings (sometimes with an extra closing brace), and later
+    arguments leaked into the text of an earlier one as markup."""
     out = dict(args)
     for key, value in list(out.items()):
-        if isinstance(value, str) and '<parameter name="' in value:
-            head, _, tail = value.partition('<parameter name="')
-            out[key] = TRAILING_TAGS.sub("", head).strip()
-            for name, raw in LEAKED.findall('<parameter name="' + tail):
+        if not isinstance(value, str) or "<" not in value:
+            continue
+        cut = min((m.start() for m in LEAKED.finditer(value)), default=None)
+        if cut is None:
+            continue
+        for m in LEAKED.finditer(value):
+            name, raw = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            if name != key:
                 out.setdefault(name, _value(raw))
+        out[key] = TAG.sub("", value[:cut]).strip() or out[key]
     for key in ("proposal", "evidence", "ruled_out"):
         if isinstance(out.get(key), str):
             out[key] = _value(out[key])
@@ -169,9 +183,12 @@ def build_graph(llm, budget: Budget):
         if not problems:
             return {"final": sub, "trace": [{"check": "accepted"}]}
         if state["checks"] < MAX_CHECKS:
-            note = "Your submission was rejected:\n- " + "\n- ".join(problems) + "\nFix this and call submit again."
+            note = ("Your submission was rejected:\n- " + "\n- ".join(problems) + "\nFix this and call submit "
+                    "again. Pass `evidence` and `ruled_out` as JSON arrays and `proposal` as a JSON object, "
+                    "not as strings, and put each argument in its own field.")
             return {"messages": [HumanMessage(note)], "submitted": None, "checks": state["checks"] + 1,
-                    "trace": [{"check": "rejected", "problems": problems}]}
+                    "trace": [{"check": "rejected", "problems": problems,
+                               "raw": json.dumps(sub, default=str)[:3000]}]}
         final = {
             "action": "escalate",
             "summary": "The agent could not produce a valid diagnosis. Last attempt: " + str(sub.get("summary", ""))[:500],

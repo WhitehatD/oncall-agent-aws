@@ -160,16 +160,47 @@ SCENARIOS = {
 }
 
 
+def retry(fn, tries=12, every=5):
+    """Lambda refuses updates while a previous one is still being applied."""
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            code = getattr(e, "response", {}).get("Error", {}).get("Code")
+            if code not in ("ResourceInUseException", "ResourceConflictException") or i == tries - 1:
+                raise
+            time.sleep(every)
+
+
+def restore_api_code(c):
+    """Put the original API source back in $LATEST if a scenario changed it, so the
+    next scenario that publishes a version does not inherit an old bug."""
+    import urllib.request
+    lam = c["lambda"]
+    url = lam.get_function(FunctionName=API)["Code"]["Location"]
+    with zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(url, timeout=30).read())) as z:
+        current = z.read("handler.py").decode()
+    if current != API_SRC.read_text():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("handler.py", API_SRC.read_text())
+        retry(lambda: lam.update_function_code(FunctionName=API, ZipFile=buf.getvalue()))
+        wait_updated(lam, API)
+
+
 def reset(c, out):
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
     lam = c["lambda"]
-    if "good_version" in state:
-        lam.update_alias(FunctionName=API, Name="live", FunctionVersion=state["good_version"])
-    lam.delete_function_concurrency(FunctionName=API)
-    lam.update_function_configuration(FunctionName=WORKER, Timeout=10, MemorySize=256)
+    restore_api_code(c)
+    # Point live at a published copy of the clean $LATEST. Publishing an unchanged
+    # $LATEST returns the existing version, so this does not pile up versions.
+    clean = retry(lambda: lam.publish_version(FunctionName=API, Description="clean"))["Version"]
+    retry(lambda: lam.update_alias(FunctionName=API, Name="live", FunctionVersion=clean))
+    retry(lambda: lam.delete_function_concurrency(FunctionName=API))
+    retry(lambda: lam.update_function_configuration(FunctionName=WORKER, Timeout=10, MemorySize=256))
     c["iam"].put_role_policy(RoleName=worker_role(c), PolicyName="app", PolicyDocument=out["worker_policy"])
     c["events"].enable_rule(Name=RULE)
-    lam.update_event_source_mapping(UUID=out["worker_mapping_uuid"], Enabled=True)
+    retry(lambda: lam.update_event_source_mapping(UUID=out["worker_mapping_uuid"], Enabled=True))
     STATE.unlink(missing_ok=True)
     print("demo reset. Alarms clear within a few minutes.")
 

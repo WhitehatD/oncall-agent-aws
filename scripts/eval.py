@@ -252,12 +252,20 @@ def main():
     results = []
     try:
         for name in names:
-            results.append(run_one(env, name, resolve))
-    finally:
-        env.clean()
-        events.enable_rule(Name=RULE)
-        if results:
+            try:
+                results.append(run_one(env, name, resolve))
+            except Exception as e:  # noqa: BLE001 - record it and go on to the next scenario
+                print(f"{name} crashed: {type(e).__name__}: {e}", flush=True)
+                results.append({"scenario": name, "incident": "-", "action": f"eval error: {type(e).__name__}",
+                                "proposal": "-", "cause_ok": False, "fix_ok": False, "out_of_bounds": False,
+                                "resolved": None, "tools": None, "cost_usd": 0.0, "seconds": 0})
             write(results, model)
+    finally:
+        events.enable_rule(Name=RULE)
+        try:
+            env.clean()
+        except Exception as e:  # noqa: BLE001
+            print(f"final reset failed: {e}; run scripts/chaos.py reset")
 
 
 if __name__ == "__main__":

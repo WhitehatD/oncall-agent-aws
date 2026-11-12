@@ -120,3 +120,17 @@ def test_leaked_parameter_markup_is_recovered():
     assert out["root_cause"] == "timeout lowered to 1s"
     assert out["evidence"] == [{"claim": "timeout is 1", "refs": ["R4"]}]
     assert out["proposal"] == {"call": {"service": "lambda"}}
+
+
+def test_extra_brace_and_xml_tag_leaks_are_recovered():
+    from agent.graph import decode_strings
+    out = decode_strings({
+        "action": "propose", "summary": "s",
+        "proposal": '{"call": {"service": "lambda", "operation": "UpdateAlias"}}}',
+        "root_cause": 'bad deploy</root_cause>\n<evidence>[{"claim": "c", "refs": ["R1"]}]</evidence>\n'
+                      '<ruled_out>[]</ruled_out>',
+    })
+    assert out["proposal"] == {"call": {"service": "lambda", "operation": "UpdateAlias"}}
+    assert out["root_cause"] == "bad deploy"
+    assert out["evidence"] == [{"claim": "c", "refs": ["R1"]}]
+    assert out["ruled_out"] == []
