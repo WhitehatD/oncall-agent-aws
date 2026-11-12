@@ -4,6 +4,8 @@ An on-call agent for AWS. When an alarm fires, it investigates with any read-onl
 
 It can propose any write in the account. What keeps it safe is IAM, not the prompt.
 
+![Architecture: demo service, Step Functions workflow, agent and approval, and the three checks between the model and the account](docs/architecture.svg)
+
 ## One incident
 
 ```
@@ -106,7 +108,8 @@ src/approval/   the page behind the email link
 src/shared/     policy (what may be read and written), incident store
 src/demo/       the service that breaks
 infra/          Terraform: demo, system, IAM, the state machine
-scripts/        build, chaos, eval
+scripts/        build, chaos, eval, up, down
+docs/           architecture diagram and the script that draws it
 tests/          policy, graph (scripted model), handlers (moto)
 ```
 
