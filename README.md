@@ -85,15 +85,13 @@ It did not start at 10/10. The first full run proposed the right fix in 2 of 8 s
 You need Terraform, Python 3.12, an AWS account (the Free plan works) and an OpenRouter key.
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # bin/ on Linux and macOS
-python scripts/build.py                       # lays out the Lambda packages
-cp infra/terraform.tfvars.example infra/terraform.tfvars   # email, OpenRouter key, model
-cd infra && terraform init && terraform apply  # about 6 minutes; confirm the SNS email
-cd .. && python scripts/chaos.py break bad_deploy
-# wait for the email, open the link, approve or reject
+cp infra/terraform.tfvars.example infra/terraform.tfvars   # email, OpenRouter key, region
+aws login --region <region>                    # or any AWS credentials Terraform can use
+scripts/up.sh                                  # build + terraform apply, about 6 minutes; confirm the SNS email once
+python scripts/chaos.py break bad_deploy       # wait for the email, open the link, approve or reject
 python scripts/chaos.py reset
-python scripts/eval.py                        # optional, about 20 minutes for all ten
-cd infra && terraform destroy
+python scripts/eval.py                         # optional, about 20 minutes for all ten
+scripts/down.sh                                # terraform destroy: removes everything
 ```
 
 Cost: the AWS side stays within the always-free limits for a short run. The model is any OpenRouter model with tool calling, set by `model` in `terraform.tfvars`. With a small model, an investigation costs about a cent.
