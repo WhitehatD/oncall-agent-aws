@@ -15,7 +15,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 
 GROUP_WINDOW_S = int(os.environ.get("GROUP_WINDOW_S", "900"))
-TERMINAL = {"resolved", "advised", "escalated", "timeout", "failed"}
+TERMINAL = {"resolved", "advised", "escalated", "timeout", "failed", "stopped"}
 
 _table = None
 

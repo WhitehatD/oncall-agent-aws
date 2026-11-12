@@ -83,3 +83,18 @@ def test_plain_text_reply_gets_nudged():
     out, _ = run(["I think it is a deploy.", [read("lambda", "GetAlias", FunctionName="demo-orders-api", Name="live")],
                   [submit(**ROLLBACK)]])
     assert out["final"]["action"] == "propose"
+
+
+def test_alarm_is_citable_and_failed_results_are_not_evidence():
+    ok = {**ROLLBACK, "evidence": [{"claim": "errors alarm fired", "refs": ["A1"]}]}
+    out, _ = run([[submit(**ok)]])
+    assert out["final"]["action"] == "propose"
+    bad = {**ROLLBACK, "evidence": [{"claim": "table is empty", "refs": ["R1"]}]}
+    out, _ = run([[read("dynamodb", "Scan", TableName="demo-orders")], [submit(**bad)], [submit(**ok)]])
+    rejected = [t for t in out["trace"] if t.get("check") == "rejected"]
+    assert rejected and "refused or failed" in rejected[0]["problems"][0]
+
+
+def test_env_decrypt_error_is_relabelled():
+    res = tools.hide_env_error({"FunctionName": "x", "Environment": {"Error": {"ErrorCode": "AccessDeniedException"}}})
+    assert "hidden" in res["Environment"]["note"]

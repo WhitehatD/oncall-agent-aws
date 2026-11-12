@@ -63,10 +63,13 @@ def evidence_problems(sub, results):
     for i, ev in enumerate(sub.get("evidence") or []):
         refs = ev.get("refs") or []
         missing = [r for r in refs if r not in results]
+        failed = [r for r in refs if r in results and not results[r]["ok"]]
         if not refs:
             problems.append(f"evidence[{i}] ('{ev.get('claim', '')[:60]}') cites no result")
         elif missing:
             problems.append(f"evidence[{i}] cites {missing}, which do not exist")
+        elif failed and len(failed) == len(refs):
+            problems.append(f"evidence[{i}] cites only {failed}, which were refused or failed and show nothing")
     return problems
 
 
@@ -175,7 +178,7 @@ def investigate(llm, incident, feedback, attempt, budget=None, system_prefix="on
             SystemMessage(SYSTEM.format(system_prefix=system_prefix, max_attempts=max_attempts)),
             HumanMessage(incident_message(incident, feedback, attempt)),
         ],
-        "trace": [], "results": {}, "tool_calls": 0, "cost_usd": 0.0, "tokens": 0,
+        "trace": [], "results": {"A1": {"tool": "alarm", "ok": True}}, "tool_calls": 0, "cost_usd": 0.0, "tokens": 0,
         "submitted": None, "checks": 0, "final": None,
     }
     return graph.invoke(state, {"recursion_limit": 120})

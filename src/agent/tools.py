@@ -51,7 +51,20 @@ def aws_read(service: str, operation: str, params: Optional[dict] = None) -> str
     Data and secrets (S3 objects, table items, queue messages, secret values,
     function code) are not readable."""
     check_read(service, operation, params or {})
-    return compact(getattr(client(service), xform_name(operation))(**(params or {})))
+    return compact(hide_env_error(getattr(client(service), xform_name(operation))(**(params or {}))))
+
+
+def hide_env_error(res):
+    """The investigator role cannot decrypt Lambda environment variables (they may hold
+    secrets), so Lambda returns an AccessDenied error in their place. Say what it is,
+    so it is not mistaken for a fault in the function."""
+    configs = [res] + [c for c in res.get("Versions", []) + res.get("Functions", []) if isinstance(c, dict)]
+    for c in configs:
+        env = c.get("Environment")
+        if isinstance(env, dict) and env.get("Error"):
+            c["Environment"] = {"note": "values hidden from the investigator role on purpose; "
+                                        "not an error in the function. Use logs to see if a variable is missing."}
+    return res
 
 
 @tool

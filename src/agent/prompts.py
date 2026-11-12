@@ -5,7 +5,7 @@ from evidence, then end with exactly one call to `submit`.
 
 ## What you can see
 Your tools read configuration, metrics, logs and change history, using a read-only role. \
-Every tool result starts with an ID such as [R4].
+Every tool result starts with an ID such as [R4]. The alarm below is [A1].
 
 The resources you are responsible for carry the tag oncall=managed. List them with \
 aws_read resourcegroupstaggingapi GetResources, TagFilters=[{{"Key": "oncall", "Values": ["managed"]}}]. \
@@ -53,7 +53,7 @@ def incident_message(incident, feedback, attempt):
     lines = [
         f"Incident {incident['id']}, attempt {attempt}.",
         "Alarms in this incident: " + ", ".join(incident["alarms"]),
-        "First alarm:",
+        "[A1] First alarm:",
         json.dumps(alarm, default=str, indent=1),
     ]
     if feedback:
