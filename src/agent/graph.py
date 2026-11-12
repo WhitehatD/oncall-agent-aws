@@ -11,7 +11,9 @@ refuse, and sends the model back with the reasons. The model's tool budget and
 cost cap are enforced here; once either is spent, the model can only submit.
 """
 
+import json
 import operator
+import re
 import os
 from dataclasses import dataclass
 from typing import Annotated, Optional, TypedDict
@@ -56,6 +58,35 @@ def usage(msg):
     if cost is None:
         cost = meta.get("input_tokens", 0) * PRICE_IN / 1e6 + meta.get("output_tokens", 0) * PRICE_OUT / 1e6
     return float(cost), int(meta.get("total_tokens", 0))
+
+
+LEAKED = re.compile(r'<parameter name="(\w+)">(.*?)(?=</parameter>|<parameter name=|$)', re.S)
+TRAILING_TAGS = re.compile(r'(\s*</[\w:]+>\s*)+$')
+
+
+def _value(text):
+    text = TRAILING_TAGS.sub("", text).strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def decode_strings(args):
+    """Repair two common ways small models mangle a large tool call:
+    nested objects sent as JSON strings, and later arguments leaked into the
+    text of an earlier one as <parameter name="..."> markup."""
+    out = dict(args)
+    for key, value in list(out.items()):
+        if isinstance(value, str) and '<parameter name="' in value:
+            head, _, tail = value.partition('<parameter name="')
+            out[key] = TRAILING_TAGS.sub("", head).strip()
+            for name, raw in LEAKED.findall('<parameter name="' + tail):
+                out.setdefault(name, _value(raw))
+    for key in ("proposal", "evidence", "ruled_out"):
+        if isinstance(out.get(key), str):
+            out[key] = _value(out[key])
+    return out
 
 
 def evidence_problems(sub, results):
@@ -110,7 +141,7 @@ def build_graph(llm, budget: Budget):
         for call in state["messages"][-1].tool_calls:
             name, args = call["name"], call["args"]
             if name == "submit":
-                submitted, content = args, "Received. Checking it."
+                submitted, content = decode_strings(args), "Received. Checking it."
             elif name in by_name:
                 n += 1
                 rid = f"R{n}"

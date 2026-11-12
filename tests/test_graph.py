@@ -98,3 +98,25 @@ def test_alarm_is_citable_and_failed_results_are_not_evidence():
 def test_env_decrypt_error_is_relabelled():
     res = tools.hide_env_error({"FunctionName": "x", "Environment": {"Error": {"ErrorCode": "AccessDeniedException"}}})
     assert "hidden" in res["Environment"]["note"]
+
+
+def test_proposal_sent_as_json_string_is_accepted():
+    import json as _json
+    as_string = {**ROLLBACK, "proposal": _json.dumps(ROLLBACK["proposal"])}
+    out, _ = run([[read("lambda", "GetAlias", FunctionName="demo-orders-api", Name="live")], [submit(**as_string)]])
+    assert out["final"]["action"] == "propose"
+    assert out["final"]["proposal"]["call"]["operation"] == "UpdateAlias"
+
+
+def test_leaked_parameter_markup_is_recovered():
+    from agent.graph import decode_strings
+    leaked = {
+        "action": "propose", "summary": "timeout cut to 1s",
+        "root_cause": 'timeout lowered to 1s</root_cause>\n<parameter name="evidence">'
+                      '[{"claim": "timeout is 1", "refs": ["R4"]}]</parameter>\n'
+                      '<parameter name="proposal">{"call": {"service": "lambda"}}</parameter>',
+    }
+    out = decode_strings(leaked)
+    assert out["root_cause"] == "timeout lowered to 1s"
+    assert out["evidence"] == [{"claim": "timeout is 1", "refs": ["R4"]}]
+    assert out["proposal"] == {"call": {"service": "lambda"}}
