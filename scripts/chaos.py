@@ -124,8 +124,16 @@ def schedule_disabled(c, out):
     return {}
 
 
+def mapping_settled(c, uuid, want):
+    for _ in range(60):
+        if c["lambda"].get_event_source_mapping(UUID=uuid)["State"] == want:
+            return
+        time.sleep(3)
+
+
 def worker_paused(c, out):
-    c["lambda"].update_event_source_mapping(UUID=out["worker_mapping_uuid"], Enabled=False)
+    retry(lambda: c["lambda"].update_event_source_mapping(UUID=out["worker_mapping_uuid"], Enabled=False))
+    mapping_settled(c, out["worker_mapping_uuid"], "Disabled")
     return {}
 
 
@@ -189,7 +197,6 @@ def restore_api_code(c):
 
 
 def reset(c, out):
-    state = json.loads(STATE.read_text()) if STATE.exists() else {}
     lam = c["lambda"]
     restore_api_code(c)
     # Point live at a published copy of the clean $LATEST. Publishing an unchanged
@@ -201,6 +208,7 @@ def reset(c, out):
     c["iam"].put_role_policy(RoleName=worker_role(c), PolicyName="app", PolicyDocument=out["worker_policy"])
     c["events"].enable_rule(Name=RULE)
     retry(lambda: lam.update_event_source_mapping(UUID=out["worker_mapping_uuid"], Enabled=True))
+    mapping_settled(c, out["worker_mapping_uuid"], "Enabled")
     STATE.unlink(missing_ok=True)
     print("demo reset. Alarms clear within a few minutes.")
 

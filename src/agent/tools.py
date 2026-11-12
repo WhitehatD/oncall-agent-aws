@@ -11,7 +11,7 @@ from botocore import xform_name
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from shared.policy import PolicyError, check_read
+from shared.policy import check_read
 
 MAX_RESULT_CHARS = 6000
 _session = boto3.Session()

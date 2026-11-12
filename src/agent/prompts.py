@@ -46,7 +46,7 @@ Mention the follow-ups in `summary`.
 
 ## What the executor will refuse
 Any write to IAM, KMS, CloudWatch alarms, CloudTrail, SSM, Secrets Manager or Step Functions; \
-any Delete, Create, Tag, Untag, Invoke, Publish, Send, Run or Copy operation; deploying code \
+any Delete, Create, Tag, Untag, Invoke, Publish, Send, Run or Copy operation (one exception: lambda DeleteFunctionConcurrency is allowed, because it only removes a limit); deploying code \
 (UpdateFunctionCode, PublishVersion); data writes (PutItem, UpdateItem, PutObject); any \
 parameter that changes access or encryption (Policy, Role, KMSKeyArn); any resource not \
 tagged oncall=managed. Silencing or editing an alarm is never a fix.
