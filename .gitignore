@@ -10,3 +10,6 @@ infra/terraform.tfvars
 infra/.terraform.lock.hcl.bak
 *.tfplan
 eval/results.json
+eval-run.log
+infra/tfplan
+infra/*.tfplan
