@@ -1,0 +1,172 @@
+{
+  "Comment": "One incident: open, investigate, check, ask a human, execute, verify, undo and retry if needed.",
+  "StartAt": "Open",
+  "States": {
+    "Open": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${control_arn}", "Payload": { "op": "open", "event.$": "$" } },
+      "ResultSelector": { "incident_id.$": "$.Payload.incident_id", "duplicate.$": "$.Payload.duplicate" },
+      "ResultPath": "$.incident",
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"], "MaxAttempts": 3 }],
+      "Next": "IsDuplicate"
+    },
+    "IsDuplicate": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.incident.duplicate", "BooleanEquals": true, "Next": "AttachedToOpenIncident" }],
+      "Default": "Setup"
+    },
+    "AttachedToOpenIncident": { "Type": "Succeed" },
+    "Setup": {
+      "Type": "Pass",
+      "Parameters": { "incident_id.$": "$.incident.incident_id", "attempt": 1 },
+      "Next": "Investigate"
+    },
+    "Investigate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${agent_arn}", "Payload": { "incident_id.$": "$.incident_id", "attempt.$": "$.attempt" } },
+      "ResultSelector": { "action.$": "$.Payload.action" },
+      "ResultPath": "$.agent",
+      "TimeoutSeconds": 660,
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"], "MaxAttempts": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Failed" }],
+      "Next": "Route"
+    },
+    "Route": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.agent.action", "StringEquals": "propose", "Next": "Validate" },
+        { "Variable": "$.agent.action", "StringEquals": "advise", "Next": "Advised" }
+      ],
+      "Default": "Escalate"
+    },
+    "Validate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${executor_arn}", "Payload": { "op": "validate", "incident_id.$": "$.incident_id" } },
+      "ResultSelector": { "ok.$": "$.Payload.ok" },
+      "ResultPath": "$.check",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Failed" }],
+      "Next": "IsValid"
+    },
+    "IsValid": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.check.ok", "BooleanEquals": true, "Next": "RequestApproval" }],
+      "Default": "NextAttempt"
+    },
+    "NextAttempt": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.attempt", "NumericGreaterThanEquals": ${max_attempts}, "Next": "Escalate" }],
+      "Default": "Increment"
+    },
+    "Increment": {
+      "Type": "Pass",
+      "Parameters": { "incident_id.$": "$.incident_id", "attempt.$": "States.MathAdd($.attempt, 1)" },
+      "Next": "Investigate"
+    },
+    "RequestApproval": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${control_arn}",
+        "Payload": { "op": "request_approval", "incident_id.$": "$.incident_id", "task_token.$": "$$.Task.Token" }
+      },
+      "ResultPath": "$.decision",
+      "TimeoutSeconds": ${approval_timeout_s},
+      "Catch": [
+        { "ErrorEquals": ["States.Timeout"], "ResultPath": "$.error", "Next": "TimedOut" },
+        { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Failed" }
+      ],
+      "Next": "Decided"
+    },
+    "Decided": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.decision.decision", "StringEquals": "approve", "Next": "Execute" }],
+      "Default": "NextAttempt"
+    },
+    "Execute": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${executor_arn}", "Payload": { "op": "execute", "incident_id.$": "$.incident_id" } },
+      "ResultSelector": { "ok.$": "$.Payload.ok" },
+      "ResultPath": "$.exec",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Failed" }],
+      "Next": "Executed"
+    },
+    "Executed": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.exec.ok", "BooleanEquals": true, "Next": "StartVerify" }],
+      "Default": "NextAttempt"
+    },
+    "StartVerify": {
+      "Type": "Pass",
+      "Parameters": { "incident_id.$": "$.incident_id", "attempt.$": "$.attempt", "polls": 0 },
+      "Next": "WaitForEffect"
+    },
+    "WaitForEffect": { "Type": "Wait", "Seconds": ${verify_wait_s}, "Next": "Verify" },
+    "Verify": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${control_arn}", "Payload": { "op": "verify", "incident_id.$": "$.incident_id" } },
+      "ResultSelector": { "cleared.$": "$.Payload.cleared" },
+      "ResultPath": "$.verify",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Failed" }],
+      "Next": "Cleared"
+    },
+    "Cleared": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.verify.cleared", "BooleanEquals": true, "Next": "Resolved" },
+        { "Variable": "$.polls", "NumericGreaterThanEquals": ${verify_polls}, "Next": "Undo" }
+      ],
+      "Default": "Poll"
+    },
+    "Poll": {
+      "Type": "Pass",
+      "Parameters": { "incident_id.$": "$.incident_id", "attempt.$": "$.attempt", "polls.$": "States.MathAdd($.polls, 1)" },
+      "Next": "WaitForEffect"
+    },
+    "Undo": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${executor_arn}", "Payload": { "op": "undo", "incident_id.$": "$.incident_id" } },
+      "ResultPath": null,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Failed" }],
+      "Next": "NextAttempt"
+    },
+    "Resolved": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${control_arn}", "Payload": { "op": "notify", "outcome": "resolved", "incident_id.$": "$.incident_id" } },
+      "End": true
+    },
+    "Advised": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${control_arn}", "Payload": { "op": "notify", "outcome": "advised", "incident_id.$": "$.incident_id" } },
+      "End": true
+    },
+    "Escalate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${control_arn}", "Payload": { "op": "notify", "outcome": "escalated", "incident_id.$": "$.incident_id" } },
+      "End": true
+    },
+    "TimedOut": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${control_arn}", "Payload": { "op": "notify", "outcome": "timeout", "incident_id.$": "$.incident_id" } },
+      "End": true
+    },
+    "Failed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${control_arn}",
+        "Payload": { "op": "notify", "outcome": "failed", "incident_id.$": "$.incident_id", "error.$": "$.error" }
+      },
+      "End": true
+    }
+  }
+}

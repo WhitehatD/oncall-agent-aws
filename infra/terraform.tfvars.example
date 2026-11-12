@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+email              = "you@example.com"
+openrouter_api_key = "sk-or-..."
+# model            = "anthropic/claude-haiku-5.5"
+# region           = "eu-central-1"
